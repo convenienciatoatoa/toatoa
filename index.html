@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>JB ESPETO - GESTÃO TOTAL</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f1f5f9; margin: 0; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .active-tab { background-color: #ea580c !important; color: white !important; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useMemo } = React;
+
+        const SUPABASE_URL = 'https://zpzjpkrglknnhoojglmv.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpwempwa3JnbGtubmhvb2pnbG12Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NzY4NTUsImV4cCI6MjA5MzA1Mjg1NX0.6BV3CTuBjOXraXnswNBpZoapHF_NDV7P4O1ja_cVNEY'; 
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        const safeGetItem = (key, fallback) => {
+            try {
+                const val = localStorage.getItem(key);
+                return val !== null ? val : fallback;
+            } catch (e) {
+                return fallback;
+            }
+        };
+
+        const safeSetItem = (key, value) => {
+            try {
+                localStorage.setItem(key, value);
+            } catch (e) {
+                console.warn("Armazenamento local indisponível:", e);
+            }
+        };
+
+        const safeRemoveItem = (key) => {
+            try {
+                localStorage.removeItem(key);
+            } catch (e) {}
+        };
+
+        const obterBadgeAcao = (acao) => {
+            const acaoLimpa = (acao || '').toUpperCase();
+            if (acaoLimpa.includes('EXCLUSÃO') || acaoLimpa.includes('REMOVE') || acaoLimpa.includes('DELET')) {
+                return 'bg-red-500/20 text-red-400 border border-red-500/30';
+            }
+            if (acaoLimpa.includes('EDIÇÃO') || acaoLimpa.includes('EDIT')) {
+                return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
+            }
+            if (acaoLimpa.includes('FIADO')) {
+                return 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30';
+            }
+            if (acaoLimpa.includes('PAGO') || acaoLimpa.includes('VENDA') || acaoLimpa.includes('RECEB')) {
+                return 'bg-green-500/20 text-green-400 border border-green-500/30';
+            }
+            return 'bg-slate-700/50 text-slate-300 border border-slate-600/30';
+        };
+
+        const obterCorCategoria = (cat) => {
+            const c = (cat || '').toUpperCase();
+            switch (c) {
+                case 'CERVEJA': return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+                case 'BAR': return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
+                case 'DOSE': case 'DOSES': return 'bg-purple-500/20 text-purple-400 border border-purple-500/30';
+                case 'ESPETO': return 'bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                case 'COZINHA': return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                default: return 'bg-slate-700/50 text-slate-400 border border-slate-600/30';
+            }
+        };
+
+        const App = () => {
+            const [userLogado, setUserLogado] = useState(null);
+            const [pagina, setPagina] = useState('home');
+            
+            const [qtdMesas, setQtdMesas] = useState(() => {
+                const num = Number(safeGetItem('jb_qtd_mesas', '12'));
+                return (num && num > 0) ? num : 12;
+            });
+            const [mesas, setMesas] = useState(() => {
+                const num = Number(safeGetItem('jb_qtd_mesas', '12'));
+                const length = (num && num > 0) ? num : 12;
+                return Array.from({ length }, (_, i) => ({ id: i + 1, itens: [], total: 0, apelido: '' }));
+            });
+
+            const [produtos, setProdutos] = useState([]);
+            const [categoriasDb, setCategoriasDb] = useState(null);
+            const [notas, setNotas] = useState([]);
+            const [logs, setLogs] = useState([]);
+            const [equipe, setEquipe] = useState([]);
+            const [idMesaAberta, setIdMesaAberta] = useState(null);
+            const [buscaProduto, setBuscaProduto] = useState('');
+            const [categoriaSelecionada, setCategoriaSelecionada] = useState('Todos');
+            const [produtoEditando, setProdutoEditando] = useState(null);
+            const [filtroUsuarioLog, setFiltroUsuarioLog] = useState('');
+            const [paginaLog, setPaginaLog] = useState(1);
+            const logsPorPagina = 30;
+
+            const [listaGastos, setListaGastos] = useState([]);
+
+            const categoriasAtendimento = useMemo(() => {
+                const listaUnificada = [{ id: 'Todos', label: 'Todos', emoji: '🍽️', nome: 'Todos' }];
+                if (categoriasDb === null) {
+                    return [
+                        { id: 'Todos', label: 'Todos', emoji: '🍽️', nome: 'Todos' },
+                        { id: 'Cerveja', label: 'Cerveja', emoji: '🍺', nome: 'Cerveja' },
+                        { id: 'Bar', label: 'Bar', emoji: '🍹', nome: 'Bar' },
+                        { id: 'Espeto', label: 'Espeto', emoji: '🍢', nome: 'Espeto' },
+                        { id: 'Doses', label: 'Doses', emoji: '🥃', nome: 'Doses' },
+                        { id: 'Cozinha', label: 'Cozinha', emoji: '🍳', nome: 'Cozinha' },
+                        { id: 'Outros', label: 'Outros', emoji: '📦', nome: 'Outros' }
+                    ];
+                }
+                categoriasDb.forEach(c => {
+                    listaUnificada.push({ id: c.nome, label: c.nome, nome: c.nome, emoji: c.emoji || '📦' });
+                });
+                return listaUnificada;
+            }, [categoriasDb]);
+
+            const buscarDados = useCallback(async () => {
+                try {
+                    const { data: prods } = await supabaseClient.from('produtos').select('*').order('nome');
+                    if (prods) setProdutos(prods);
+
+                    const { data: cats, error: catsError } = await supabaseClient.from('categorias').select('*').order('nome');
+                    if (cats) {
+                        if (cats.length === 0) {
+                            const padroes = [
+                                { nome: 'Cerveja', emoji: '🍺' }, { nome: 'Bar', emoji: '🍹' }, { nome: 'Espeto', emoji: '🍢' },
+                                { nome: 'Doses', emoji: '🥃' }, { nome: 'Cozinha', emoji: '🍳' }, { nome: 'Outros', emoji: '📦' }
+                            ];
+                            await supabaseClient.from('categorias').insert(padroes);
+                            const { data: recats } = await supabaseClient.from('categorias').select('*').order('nome');
+                            if (recats) setCategoriasDb(recats);
+                        } else {
+                            setCategoriasDb(cats);
+                        }
+                    } else if (catsError) {
+                        setCategoriasDb(null);
+                    }
+
+                    const { data: config } = await supabaseClient.from('configuracoes_sistema').select('*').eq('chave', 'qtd_mesas').single();
+                    let mesasCount = qtdMesas;
+                    if (config) {
+                        const num = Number(config.valor);
+                        if (num && num > 0) {
+                            mesasCount = num;
+                            if (num !== qtdMesas) {
+                                setQtdMesas(num);
+                                safeSetItem('jb_qtd_mesas', num);
+                            }
+                        }
+                    }
+
+                    const { data: pedidos } = await supabaseClient.from('pedidos').select('*');
+                    const novasMesas = Array.from({ length: mesasCount }, (_, i) => ({ id: i + 1, itens: [], total: 0, apelido: '' }));
+                    if (pedidos) {
+                        pedidos.forEach(p => {
+                            const idx = p.mesa - 1;
+                            if (novasMesas[idx]) {
+                                novasMesas[idx].itens.push(p);
+                                novasMesas[idx].total += Number(p.preco_unidade);
+                                if (p.apelido_mesa) novasMesas[idx].apelido = p.apelido_mesa;
+                            }
+                        });
+                    }
+                    setMesas(novasMesas);
+
+                    const { data: nts } = await supabaseClient.from('notas_pendentes').select('*').eq('pago', false).order('data', { ascending: false });
+                    if (nts) setNotas(nts);
+
+                    const { data: lg } = await supabaseClient.from('logs_sistema').select('*').order('data', { ascending: false }).limit(1000);
+                    if (lg) setLogs(lg);
+
+                    const { data: eq = [] } = await supabaseClient.from('usuarios_gestao').select('id, usuario, nivel').order('usuario');
+                    if (eq) setEquipe(eq);
+
+                    const { data: gst } = await supabaseClient.from('gastos').select('*').order('data', { ascending: false });
+                    if (gst) setListaGastos(gst);
+
+                } catch (e) { console.error(e); }
+            }, [qtdMesas]);
+
+            useEffect(() => {
+                const sessao = safeGetItem('jb_user_data', null);
+                if (sessao) {
+                    try {
+                        setUserLogado(JSON.parse(sessao));
+                    } catch (err) {
+                        safeRemoveItem('jb_user_data');
+                    }
+                }
+                buscarDados();
+                const t = setInterval(buscarDados, 5000);
+                return () => clearInterval(t);
+            }, [buscarDados]);
+
+            useEffect(() => {
+                if (userLogado && userLogado.nivel !== 'admin' && pagina !== 'home') {
+                    setPagina('home');
+                }
+            }, [userLogado, pagina]);
+
+            const registrarLog = async (acao, detalhes) => {
+                if(!userLogado) return;
+                await supabaseClient.from('logs_sistema').insert([{ usuario: userLogado.usuario, acao, detalhes }]);
+                buscarDados();
+            };
+
+            const salvarNovaQtdMesas = async (novaQtd) => {
+                setQtdMesas(novaQtd);
+                safeSetItem('jb_qtd_mesas', novaQtd);
+                try {
+                    await supabaseClient.from('configuracoes_sistema').update({ valor: String(novaQtd) }).eq('chave', 'qtd_mesas');
+                    registrarLog("MESAS", `Alterou a quantidade total de mesas para ${novaQtd}`);
+                    buscarDados();
+                } catch (err) { console.error(err); }
+            };
+
+            const abasDisponiveis = useMemo(() => {
+                if (userLogado && userLogado.nivel === 'admin') {
+                    return ['home', 'notas', 'estoque', 'equipe', 'logs', 'financeiro', 'gastos'];
+                }
+                return ['home'];
+            }, [userLogado]);
+
+            const totalParaReceber = useMemo(() => notas.reduce((acc, n) => acc + Number(n.valor || 0), 0), [notas]);
+            const totalNotasAbertas = notas.length;
+
+            const notasAgrupadas = useMemo(() => {
+                const grupos = {};
+                notas.forEach(n => {
+                    const cliente = (n.cliente || "DESCONHECIDO").toUpperCase().trim();
+                    if (!grupos[cliente]) { grupos[cliente] = { cliente, total: 0, notasOriginais: [] }; }
+                    grupos[cliente].total += Number(n.valor || 0);
+                    grupos[cliente].notasOriginais.push(n);
+                });
+                return Object.values(grupos).sort((a, b) => b.total - a.total);
+            }, [notas]);
+
+            const totalClientesPendentes = notasAgrupadas.length;
+
+            const receberPagamentoCliente = async (grupo) => {
+                const { cliente, total, notasOriginais } = grupo;
+                const inputVal = prompt(`Cliente: ${cliente}\nTotal Devido: R$ ${total.toFixed(2)}\n\nDigite o valor:`, total.toFixed(2));
+                if (inputVal === null) return;
+                const valorPago = parseFloat(inputVal);
+                if (isNaN(valorPago) || valorPago <= 0) return alert("Valor inválido.");
+                if (valorPago > total) return alert("Valor maior que o total!");
+                try {
+                    let restanteParaAbater = valorPago;
+                    const notasOrdenadas = [...notasOriginais].sort((a, b) => a.id - b.id);
+                    for (let n of notasOrdenadas) {
+                        if (restanteParaAbater <= 0) break;
+                        const valorNota = Number(n.valor || 0);
+                        if (restanteParaAbater >= valorNota) {
+                            await supabaseClient.from('notas_pendentes').update({ pago: true }).eq('id', n.id);
+                            restanteParaAbater -= valorNota;
+                        } else {
+                            await supabaseClient.from('notas_pendentes').update({ valor: valorNota - restanteParaAbater }).eq('id', n.id);
+                            restanteParaAbater = 0;
+                        }
+                    }
+                    await registrarLog("PAGO", `${cliente}: Recebido R$ ${valorPago.toFixed(2)}`);
+                    buscarDados();
+                } catch (err) { alert("Erro ao processar pagamento."); }
+            };
+
+            const logsFiltrados = useMemo(() => {
+                if (!filtroUsuarioLog.trim()) return logs;
+                return logs.filter(l => (l.usuario || '').toLowerCase().includes(filtroUsuarioLog.toLowerCase().trim()));
+            }, [logs, filtroUsuarioLog]);
+
+            const totalPaginasLog = useMemo(() => Math.ceil(logsFiltrados.length / logsPorPagina) || 1, [logsFiltrados]);
+            const paginaLogValida = useMemo(() => Math.min(paginaLog, totalPaginasLog), [paginaLog, totalPaginasLog]);
+            const logsPaginados = useMemo(() => {
+                const inicio = (paginaLogValida - 1) * logsPorPagina;
+                return logsFiltrados.slice(inicio, inicio + logsPorPagina);
+            }, [logsFiltrados, paginaLogValida]);
+
+            // ---- LÓGICA DO FINANCEIRO MELHORADA ----
+            const resumoFinanceiroTotal = useMemo(() => {
+                const dias = {};
+                
+                logs.forEach(l => {
+                    if (!l.data) return;
+                    const dataF = new Date(l.data).toLocaleDateString('pt-BR');
+                    if (!dias[dataF]) {
+                        dias[dataF] = { data: dataF, dataObj: new Date(l.data), vendas: 0, recebidoFiado: 0, saidas: 0, fiadoGerado: 0 };
+                    }
+                    
+                    const acao = (l.acao || '').toUpperCase();
+                    const match = (l.detalhes || '').match(/R\$\s*([0-9.,]+)/i);
+                    const valor = match ? parseFloat(match[1].replace(',', '.')) : 0;
+                    
+                    if (acao === 'VENDA') dias[dataF].vendas += valor;
+                    else if (acao.includes('PAGO') || acao.includes('RECEB')) dias[dataF].recebidoFiado += valor;
+                    else if (acao === 'FIADO') dias[dataF].fiadoGerado += valor;
+                });
+
+                listaGastos.forEach(g => {
+                    if (!g.data) return;
+                    const dataF = new Date(g.data).toLocaleDateString('pt-BR');
+                    if (!dias[dataF]) {
+                        dias[dataF] = { data: dataF, dataObj: new Date(g.data), vendas: 0, recebidoFiado: 0, saidas: 0, fiadoGerado: 0 };
+                    }
+                    dias[dataF].saidas += Number(g.valor || 0);
+                });
+                
+                return Object.values(dias)
+                    .map(d => ({
+                        ...d,
+                        totalEntradas: d.vendas + d.recebidoFiado,
+                        saldoFinal: (d.vendas + d.recebidoFiado) - d.saidas
+                    }))
+                    .sort((a, b) => b.dataObj - a.dataObj);
+            }, [logs, listaGastos]);
+
+            const finHoje = useMemo(() => {
+                const hoje = new Date().toLocaleDateString('pt-BR');
+                return resumoFinanceiroTotal.find(d => d.data === hoje) || { data: hoje, vendas: 0, recebidoFiado: 0, saidas: 0, totalEntradas: 0, saldoFinal: 0, fiadoGerado: 0 };
+            }, [resumoFinanceiroTotal]);
+
+            const adicionarNovoGasto = async (e) => {
+                e.preventDefault();
+                const descricao = e.target.descricao.value.trim();
+                const valor = parseFloat(e.target.valor.value);
+                if (!descricao || isNaN(valor) || valor <= 0) return alert("Insira valores válidos.");
+                try {
+                    const { error } = await supabaseClient.from('gastos').insert([{ descricao: descricao.toUpperCase(), valor, data: new Date().toISOString() }]);
+                    if (error) throw error;
+                    registrarLog("GASTO", `Adicionou: ${descricao.toUpperCase()} - R$ ${valor.toFixed(2)}`);
+                    e.target.reset();
+                    buscarDados();
+                } catch (err) { alert("Erro ao salvar gasto."); }
+            };
+
+            const removerGastoItem = async (id, desc) => {
+                if (confirm(`Remover gasto: ${desc}?`)) {
+                    try {
+                        await supabaseClient.from('gastos').delete().eq('id', id);
+                        registrarLog("EXCLUSÃO GASTO", `Removeu: ${desc}`);
+                        buscarDados();
+                    } catch (err) { alert("Erro ao excluir."); }
+                }
+            };
+
+            const resumoGastosMesAtual = useMemo(() => {
+                const hoje = new Date();
+                return listaGastos.reduce((total, item) => {
+                    const d = new Date(item.data);
+                    if (d.getMonth() === hoje.getMonth() && d.getFullYear() === hoje.getFullYear()) return total + Number(item.valor || 0);
+                    return total;
+                }, 0);
+            }, [listaGastos]);
+
+            const adicionarProdutoMesa = async (p) => {
+                if (p.estoque <= 0) return alert("Sem estoque!");
+                try {
+                    const mesaAtual = mesas[idMesaAberta - 1];
+                    await supabaseClient.from('pedidos').insert([{ mesa: idMesaAberta, produto_nome: p.nome, preco_unidade: p.preco, apelido_mesa: mesaAtual?.apelido || '' }]);
+                    await supabaseClient.from('produtos').update({ estoque: p.estoque - 1 }).eq('id', p.id);
+                    buscarDados();
+                } catch (err) { console.error(err); }
+            };
+
+            const alterarApelido = async () => {
+                const ap = prompt("Nome/Apelido:", mesas[idMesaAberta - 1]?.apelido || '');
+                if (ap !== null) { await supabaseClient.from('pedidos').update({ apelido_mesa: ap }).eq('mesa', idMesaAberta); buscarDados(); }
+            };
+
+            const registrarFiado = async () => {
+                const clie = prompt("Cliente Fiado:", mesas[idMesaAberta - 1]?.apelido || '');
+                if (clie) {
+                    const totalMesa = mesas[idMesaAberta - 1]?.total || 0;
+                    await supabaseClient.from('notas_pendentes').insert([{ cliente: clie.toUpperCase(), valor: totalMesa }]);
+                    await registrarLog("FIADO", `${clie}: R$ ${totalMesa.toFixed(2)}`);
+                    await supabaseClient.from('pedidos').delete().eq('mesa', idMesaAberta);
+                    setIdMesaAberta(null);
+                }
+            };
+
+            const registrarPagamento = async () => {
+                if (confirm("Confirmar pagamento?")) {
+                    await registrarLog("VENDA", `Mesa ${idMesaAberta}: R$ ${mesas[idMesaAberta - 1]?.total.toFixed(2)}`);
+                    await supabaseClient.from('pedidos').delete().eq('mesa', idMesaAberta);
+                    setIdMesaAberta(null);
+                }
+            };
+
+            const removerProduto = async (id, nome) => {
+                if(confirm(`Excluir ${nome}?`)) { await supabaseClient.from('produtos').delete().eq('id', id); registrarLog("EXCLUSÃO", `Produto removido: ${nome}`); }
+            };
+
+            const removerUsuario = async (id, nome) => {
+                if(userLogado.usuario === nome) return alert("Não pode excluir a si mesmo!");
+                if(confirm(`Remover acesso de ${nome}?`)) { await supabaseClient.from('usuarios_gestao').delete().eq('id', id); registrarLog("EQUIPE", `Removeu usuário: ${nome}`); }
+            };
+
+            if (!userLogado) return (
+                <div className="h-screen flex items-center justify-center p-6 bg-slate-950">
+                    <form onSubmit={async (e) => {
+                        e.preventDefault();
+                        const { data } = await supabaseClient.from('usuarios_gestao').select('*').eq('usuario', e.target.u.value.toLowerCase()).eq('senha', e.target.s.value).single();
+                        if (data) { setUserLogado(data); safeSetItem('jb_user_data', JSON.stringify(data)); buscarDados(); }
+                        else alert("Credenciais incorretas");
+                    }} className="w-full max-w-sm bg-slate-900 p-8 rounded-[40px] border border-slate-800">
+                        <h1 className="text-3xl font-black text-center mb-8 italic uppercase tracking-tighter">JB <span className="text-orange-500">Espeto</span></h1>
+                        <input name="u" placeholder="USUÁRIO" className="w-full p-4 mb-4 bg-slate-800 rounded-2xl text-white outline-none border border-slate-700 font-bold uppercase" required />
+                        <input name="s" type="password" placeholder="SENHA" className="w-full p-4 mb-6 bg-slate-800 rounded-2xl text-white outline-none border border-slate-700 font-bold" required />
+                        <button className="w-full bg-orange-600 p-4 rounded-2xl font-black uppercase shadow-lg shadow-orange-900/20">Entrar</button>
+                    </form>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen pb-32">
+                    <header className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center sticky top-0 z-50">
+                        <div className="font-black italic text-xl uppercase tracking-tighter">JB <span className="text-orange-500">Espeto</span></div>
+                        <div className="flex items-center gap-3">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase">{userLogado.usuario}</span>
+                            <button onClick={() => { safeRemoveItem('jb_user_data'); setUserLogado(null); }} className="text-[10px] font-black text-red-500 border border-red-500/20 px-2 py-1 rounded">SAIR</button>
+                        </div>
+                    </header>
+
+                    <main className="p-4">
+                        {pagina === 'home' && (
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                                    <div className="text-xs font-black uppercase text-slate-400">Total: {qtdMesas} Mesas</div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => { if (qtdMesas > 1) salvarNovaQtdMesas(qtdMesas - 1); }} className="bg-red-600/10 border border-red-500/20 text-red-500 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase">- Remover</button>
+                                        <button onClick={() => salvarNovaQtdMesas(qtdMesas + 1)} className="bg-green-600/10 border border-green-500/20 text-green-500 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase">+ Adicionar</button>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    {mesas.map(m => (
+                                        <div key={m.id} onClick={() => setIdMesaAberta(m.id)} className={`p-4 rounded-2xl border-2 transition-all ${m.total > 0 ? 'bg-orange-600 border-orange-400 scale-105 shadow-xl' : 'bg-slate-800 border-slate-700 opacity-60'}`}>
+                                            <div className="text-[10px] font-black uppercase opacity-80">Mesa {m.id}</div>
+                                            <div className="text-xl font-black">R$ {m.total.toFixed(2)}</div>
+                                            {m.apelido && <div className="text-[9px] bg-black/20 p-1 mt-1 rounded font-bold uppercase truncate">👤 {m.apelido}</div>}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {pagina === 'estoque' && userLogado.nivel === 'admin' && (
+                            <div className="space-y-4">
+                                <div className="bg-slate-900 p-5 rounded-3xl border border-slate-800 space-y-4">
+                                    <h3 className="text-xs font-black uppercase text-orange-500 italic">Etiquetas (Categorias)</h3>
+                                    <form onSubmit={async (e) => {
+                                        e.preventDefault();
+                                        const nome = e.target.catNome.value.trim();
+                                        const emoji = e.target.catEmoji.value.trim() || '📦';
+                                        if (nome) { await supabaseClient.from('categorias').insert([{ nome, emoji }]); registrarLog("ESTOQUE", `Nova categoria: ${nome}`); e.target.reset(); buscarDados(); }
+                                    }} className="space-y-3">
+                                        <div className="grid grid-cols-4 gap-2">
+                                            <input name="catEmoji" placeholder="EMOJI" maxLength="2" className="bg-slate-800 p-3 rounded-xl outline-none text-sm text-center font-bold text-white border border-slate-700/50" />
+                                            <input name="catNome" placeholder="NOME" className="col-span-3 bg-slate-800 p-3 rounded-xl outline-none text-sm font-bold uppercase text-white border border-slate-700/50" required />
+                                        </div>
+                                        <button className="w-full bg-orange-600 p-3 rounded-xl font-black uppercase text-xs">Criar Categoria</button>
+                                    </form>
+                                    <div className="flex flex-wrap gap-2">
+                                        {categoriasDb?.map(c => (
+                                            <div key={c.id} className="bg-slate-800 px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-2 border border-slate-700">
+                                                <span>{c.emoji} {c.nome}</span>
+                                                <button onClick={async () => { if(confirm(`Excluir ${c.nome}?`)) { await supabaseClient.from('categorias').delete().eq('id', c.id); buscarDados(); } }} className="text-red-500 font-bold">✕</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <form onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    await supabaseClient.from('produtos').insert([{ nome: e.target.nome.value.toUpperCase(), preco_compra: e.target.preco_compra.value, preco: e.target.preco.value, estoque: e.target.estoque.value, categoria: e.target.categoria.value }]);
+                                    e.target.reset(); buscarDados();
+                                }} className="bg-slate-900 p-5 rounded-3xl border border-slate-800 space-y-3">
+                                    <h3 className="text-xs font-black uppercase text-orange-500 italic">Novo Produto</h3>
+                                    <input name="nome" placeholder="NOME" className="w-full bg-slate-800 p-3 rounded-xl outline-none text-sm font-bold uppercase" required />
+                                    <div className="grid grid-cols-2 gap-2"><input name="preco_compra" step="0.01" type="number" placeholder="COMPRA" className="bg-slate-800 p-3 rounded-xl text-sm font-bold" required /><input name="preco" step="0.01" type="number" placeholder="VENDA" className="bg-slate-800 p-3 rounded-xl text-sm font-bold" required /></div>
+                                    <div className="grid grid-cols-2 gap-2"><input name="estoque" type="number" placeholder="ESTOQUE" className="bg-slate-800 p-3 rounded-xl text-sm font-bold" required /><select name="categoria" className="bg-slate-800 p-3 rounded-xl text-sm font-bold uppercase">{categoriasAtendimento.filter(c=>c.id!=='Todos').map(c=>(<option key={c.id} value={c.nome}>{c.nome}</option>))}</select></div>
+                                    <button className="w-full bg-orange-600 p-3 rounded-xl font-black uppercase text-xs">Adicionar</button>
+                                </form>
+                                <div className="space-y-2">
+                                    {produtos.map(p => (
+                                        <div key={p.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 font-black uppercase text-xs">{p.nome} <span className={`text-[8px] px-2 py-0.5 rounded-full ${obterCorCategoria(p.categoria)}`}>{p.categoria}</span></div>
+                                                <div className="text-slate-500 text-[10px] font-bold">R$ {Number(p.preco).toFixed(2)} | Est: {p.estoque}</div>
+                                            </div>
+                                            <div className="flex gap-2"><button onClick={() => setProdutoEditando(p)} className="bg-slate-800 p-2 rounded-xl text-blue-400">✏️</button><button onClick={() => removerProduto(p.id, p.nome)} className="bg-slate-800 p-2 rounded-xl text-red-500">🗑️</button></div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {pagina === 'gastos' && userLogado.nivel === 'admin' && (
+                            <div className="space-y-4">
+                                <h2 className="text-xl font-black text-orange-500 italic uppercase">Gestão de Gastos</h2>
+                                <div className="bg-gradient-to-br from-red-950/40 to-slate-900 p-6 rounded-[36px] border border-red-900/20">
+                                    <h2 className="text-xs font-black uppercase text-red-400">Total do Mês Corrente</h2>
+                                    <div className="text-3xl font-black text-red-500">R$ {resumoGastosMesAtual.toFixed(2)}</div>
+                                </div>
+                                <form onSubmit={adicionarNovoGasto} className="bg-slate-900 p-5 rounded-3xl border border-slate-800 space-y-4">
+                                    <h3 className="text-xs font-black uppercase text-slate-400 italic">Novo Insumo/Gasto</h3>
+                                    <input name="descricao" placeholder="DESCRIÇÃO (EX: CARVÃO, CARNE)" className="w-full bg-slate-800 p-3 rounded-xl outline-none text-sm font-bold uppercase text-white" required />
+                                    <input name="valor" type="number" step="0.01" placeholder="VALOR (R$)" className="w-full bg-slate-800 p-3 rounded-xl outline-none text-sm font-bold text-white" required />
+                                    <button className="w-full bg-red-600 p-3 rounded-xl font-black uppercase text-xs text-white shadow-lg">Gravar Gasto</button>
+                                </form>
+                                <div className="space-y-2">
+                                    <h3 className="text-xs font-black uppercase text-slate-400 italic pl-1">Histórico de Lançamentos</h3>
+                                    {listaGastos.map(g => (
+                                        <div key={g.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center">
+                                            <div>
+                                                <div className="font-black uppercase text-xs text-white">{g.descricao}</div>
+                                                <div className="text-[9px] text-slate-500 font-mono">{new Date(g.data).toLocaleString('pt-BR')}</div>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <div className="text-sm font-black text-red-400">R$ {Number(g.valor).toFixed(2)}</div>
+                                                <button onClick={() => removerGastoItem(g.id, g.descricao)} className="text-red-500 font-bold text-lg">✕</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {listaGastos.length === 0 && <div className="text-center py-10 text-slate-600 font-bold uppercase text-xs">Nenhum gasto registrado</div>}
+                                </div>
+                            </div>
+                        )}
+
+                        {pagina === 'financeiro' && userLogado.nivel === 'admin' && (
+                            <div className="space-y-4">
+                                <h2 className="text-xl font-black text-orange-500 italic uppercase">Resumo Financeiro</h2>
+                                
+                                <div className="bg-slate-900 p-6 rounded-[32px] border-2 border-slate-800 shadow-xl space-y-4">
+                                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Caixa Hoje ({finHoje.data})</span>
+                                        <span className={`text-xl font-black ${finHoje.saldoFinal >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                            R$ {finHoje.saldoFinal.toFixed(2)}
+                                        </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <div className="text-[9px] font-black text-slate-500 uppercase">Entradas</div>
+                                            <div className="text-lg font-black text-emerald-400">R$ {finHoje.totalEntradas.toFixed(2)}</div>
+                                            <div className="text-[8px] text-slate-400 uppercase">Vendas: R$ {finHoje.vendas.toFixed(2)}</div>
+                                            <div className="text-[8px] text-slate-400 uppercase">Recebido Fiado: R$ {finHoje.recebidoFiado.toFixed(2)}</div>
+                                        </div>
+                                        <div className="space-y-1 text-right">
+                                            <div className="text-[9px] font-black text-slate-500 uppercase">Saídas</div>
+                                            <div className="text-lg font-black text-red-500">R$ {finHoje.saidas.toFixed(2)}</div>
+                                            <div className="text-[8px] text-slate-400 uppercase italic">Insumos/Gastos</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="bg-slate-950 p-3 rounded-2xl flex justify-between items-center border border-slate-800">
+                                        <span className="text-[9px] font-black text-yellow-600 uppercase italic">Novos Fiados Gerados:</span>
+                                        <span className="text-xs font-black text-yellow-600">R$ {finHoje.fiadoGerado.toFixed(2)}</span>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Histórico por Dia</h3>
+                                    {resumoFinanceiroTotal.map((d, i) => (
+                                        <div key={i} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex flex-col gap-2">
+                                            <div className="flex justify-between items-center">
+                                                <span className="font-black text-xs text-white uppercase">{d.data}</span>
+                                                <span className={`font-black text-sm ${d.saldoFinal >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                                    R$ {d.saldoFinal.toFixed(2)}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between text-[9px] font-bold uppercase text-slate-500">
+                                                <span>Entradas: <span className="text-emerald-600">R$ {d.totalEntradas.toFixed(2)}</span></span>
+                                                <span>Saídas: <span className="text-red-600">R$ {d.saidas.toFixed(2)}</span></span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        
+                        {pagina === 'notas' && userLogado.nivel === 'admin' && (
+                            <div className="space-y-4">
+                                <h2 className="text-xl font-black text-orange-500 italic uppercase">Fiado</h2>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="bg-slate-900 p-4 rounded-3xl border border-slate-800"><div className="text-[9px] font-black text-slate-500 uppercase">TOTAL</div><div className="text-2xl font-black text-yellow-500 mt-2">R$ {totalParaReceber.toFixed(2)}</div></div>
+                                    <div className="bg-slate-900 p-4 rounded-3xl border border-slate-800"><div className="text-[9px] font-black text-slate-500 uppercase">CLIENTES</div><div className="text-xl font-black text-orange-500 mt-2">{totalClientesPendentes}</div></div>
+                                </div>
+                                <div className="space-y-2">
+                                    {notasAgrupadas.map(g => (
+                                        <div key={g.cliente} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center">
+                                            <div><div className="font-black uppercase text-xs text-white">{g.cliente}</div><div className="text-green-500 font-black mt-0.5">R$ {g.total.toFixed(2)}</div></div>
+                                            <button onClick={() => receberPagamentoCliente(g)} className="bg-green-600 p-3 rounded-xl text-[10px] font-black uppercase">Receber</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {pagina === 'logs' && userLogado.nivel === 'admin' && (
+                            <div className="space-y-4">
+                                <input placeholder="🔍 BUSCAR OPERADOR..." value={filtroUsuarioLog} onChange={(e) => setFiltroUsuarioLog(e.target.value)} className="w-full bg-slate-900 p-3.5 rounded-2xl text-xs font-bold uppercase border border-slate-800 text-white" />
+                                <div className="space-y-3">
+                                    {logsPaginados.map(l => (
+                                        <div key={l.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex flex-col gap-2">
+                                            <div className="flex justify-between items-start gap-2"><span className={`text-[8px] px-2 py-0.5 rounded-full font-black uppercase ${obterBadgeAcao(l.acao)}`}>{l.acao}</span><span className="text-[9px] font-bold text-slate-500">{new Date(l.data).toLocaleString('pt-BR')}</span></div>
+                                            <div className="text-white text-xs font-bold leading-relaxed">{l.detalhes}</div>
+                                            <div className="text-[9px] font-semibold text-slate-500 uppercase">👤 {l.usuario}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {pagina === 'equipe' && userLogado.nivel === 'admin' && (
+                            <div className="space-y-4">
+                                <form onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    await supabaseClient.from('usuarios_gestao').insert([{ usuario: e.target.usuario.value.toLowerCase(), senha: e.target.senha.value, nivel: e.target.nivel.value }]);
+                                    e.target.reset(); buscarDados();
+                                }} className="bg-slate-900 p-5 rounded-3xl border border-slate-800 space-y-3">
+                                    <h3 className="text-xs font-black uppercase text-orange-500 italic">Novo Usuário</h3>
+                                    <input name="usuario" placeholder="USUÁRIO" className="w-full bg-slate-800 p-3 rounded-xl outline-none text-sm font-bold uppercase" required />
+                                    <input name="senha" type="password" placeholder="SENHA" className="w-full bg-slate-800 p-3 rounded-xl outline-none text-sm font-bold" required />
+                                    <select name="nivel" className="w-full bg-slate-800 p-3 rounded-xl outline-none text-sm font-bold uppercase"><option value="atendente">Atendente</option><option value="admin">Administrador</option></select>
+                                    <button className="w-full bg-orange-600 p-3 rounded-xl font-black uppercase text-xs">Criar</button>
+                                </form>
+                                <div className="space-y-2">
+                                    {equipe.map(m => (
+                                        <div key={m.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center">
+                                            <div><div className="font-black uppercase text-xs">{m.usuario}</div><div className="text-orange-500 text-[9px] font-black uppercase">{m.nivel}</div></div>
+                                            <button onClick={() => removerUsuario(m.id, m.usuario)} className="text-red-500">🗑️</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <nav className="fixed bottom-0 w-full bg-slate-900/95 backdrop-blur-md p-4 border-t border-slate-800 flex gap-2 z-40 overflow-x-auto no-scrollbar">
+                        {abasDisponiveis.map(p => (
+                            <button key={p} onClick={() => setPagina(p)} className={`flex-none px-6 py-4 rounded-2xl font-black text-[10px] uppercase transition-all ${pagina === p ? 'active-tab' : 'bg-slate-800 text-slate-500'}`}>
+                                {p === 'home' ? 'Mesas' : p === 'financeiro' ? 'Financeiro' : p === 'gastos' ? 'Gastos' : p === 'notas' ? 'Fiado' : p === 'estoque' ? 'Estoque' : p === 'equipe' ? 'Equipe' : p === 'logs' ? 'Logs' : p}
+                            </button>
+                        ))}
+                    </nav>
+
+                    {idMesaAberta && (
+                        <div className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[60] flex items-end">
+                            <div className="bg-slate-900 w-full rounded-t-[40px] p-5 border-t border-slate-700 h-[95vh] flex flex-col">
+                                <div className="flex justify-between items-center mb-3">
+                                    <h2 className="text-2xl font-black text-orange-500 italic uppercase">Mesa {idMesaAberta}</h2>
+                                    <button onClick={() => { setIdMesaAberta(null); setBuscaProduto(''); setCategoriaSelecionada('Todos'); }} className="bg-slate-800 w-10 h-10 rounded-full font-bold flex items-center justify-center text-white">✕</button>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-2xl mb-3 border border-slate-800 shadow-inner">
+                                    <div className="max-h-24 overflow-y-auto mb-1 space-y-1 pr-1 custom-scrollbar">
+                                        {(mesas[idMesaAberta-1]?.itens || []).map((it, i) => (
+                                            <div key={i} className="flex justify-between text-[13px] font-bold uppercase text-slate-400">
+                                                <span className="truncate mr-2">{it.produto_nome}</span>
+                                                <div className="flex gap-3 items-center shrink-0"><span>R$ {Number(it.preco_unidade || 0).toFixed(2)}</span><button onClick={async () => { await supabaseClient.from('pedidos').delete().eq('id', it.id); buscarDados(); }} className="text-red-500 font-black p-1">✕</button></div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="text-right text-lg font-black pt-1 border-t border-slate-800 text-white">R$ {(mesas[idMesaAberta-1]?.total || 0).toFixed(2)}</div>
+                                </div>
+                                <div className="mb-3"><input type="text" placeholder="🔍 BUSCAR..." value={buscaProduto} onChange={(e) => setBuscaProduto(e.target.value)} className="w-full bg-slate-800 p-3.5 rounded-xl outline-none text-sm font-bold uppercase border border-slate-700 text-white" /></div>
+                                <div className="flex gap-2 overflow-x-auto no-scrollbar mb-4 pb-2">
+                                    {categoriasAtendimento.map(cat => (
+                                        <button key={cat.id} onClick={() => setCategoriaSelecionada(cat.id)} className={`flex-none flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase border-2 transition-all ${categoriaSelecionada === cat.id ? 'bg-orange-600 border-orange-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}><span className="text-base">{cat.emoji}</span><span>{cat.label}</span></button>
+                                    ))}
+                                </div>
+                                <div className="flex-1 overflow-y-auto grid grid-cols-2 gap-3 mb-4 pr-1 custom-scrollbar">
+                                    {produtos.filter(p => (categoriaSelecionada === 'Todos' || p.categoria === categoriaSelecionada) && p.nome.toLowerCase().includes(buscaProduto.toLowerCase())).map(p => (
+                                        <button key={p.id} onClick={() => adicionarProdutoMesa(p)} className="p-4 bg-slate-800 rounded-2xl text-left border border-slate-700 active:scale-95 flex flex-col justify-between min-h-[80px]">
+                                            <div className="text-[11px] font-black text-white uppercase leading-tight line-clamp-2">{p.nome}</div>
+                                            <div className="flex justify-between items-end"><div className="font-black text-orange-500 text-sm">R$ {Number(p.preco || 0).toFixed(2)}</div><div className="text-[13px] font-bold text-slate-500 uppercase">Est: {p.estoque}</div></div>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="grid grid-cols-3 gap-3 pt-2">
+                                    <button onClick={alterarApelido} className="bg-slate-700 p-4 rounded-2xl font-black uppercase text-[11px]">Apelido</button>
+                                    <button onClick={registrarFiado} className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[11px]">Fiado</button>
+                                    <button onClick={registrarPagamento} className="bg-green-600 p-4 rounded-2xl font-black uppercase text-[11px]">Pagar</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {produtoEditando && (
+                        <div className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[70] flex items-center justify-center p-6">
+                            <form onSubmit={async (e) => {
+                                e.preventDefault();
+                                await supabaseClient.from('produtos').update({ nome: e.target.n.value, preco: e.target.p.value, estoque: e.target.e.value, categoria: e.target.c.value }).eq('id', produtoEditando.id);
+                                setProdutoEditando(null); buscarDados();
+                            }} className="bg-slate-900 w-full max-w-sm rounded-[30px] p-6 border border-slate-800 space-y-4">
+                                <h3 className="text-sm font-black uppercase text-orange-500">Editar</h3>
+                                <input name="n" defaultValue={produtoEditando.nome} className="w-full bg-slate-800 p-3 rounded-xl outline-none font-bold text-white uppercase" />
+                                <div className="grid grid-cols-2 gap-2"><input name="p" step="0.01" type="number" defaultValue={produtoEditando.preco} className="bg-slate-800 p-3 rounded-xl text-white font-bold" /><input name="e" type="number" defaultValue={produtoEditando.estoque} className="bg-slate-800 p-3 rounded-xl text-white font-bold" /></div>
+                                <select name="c" defaultValue={produtoEditando.categoria} className="w-full bg-slate-800 p-3 rounded-xl text-white font-bold uppercase">{categoriasAtendimento.filter(c=>c.id!=='Todos').map(c=>(<option key={c.id} value={c.nome}>{c.nome}</option>))}</select>
+                                <button className="w-full bg-orange-600 p-3.5 rounded-xl font-black uppercase">Salvar</button>
+                                <button type="button" onClick={() => setProdutoEditando(null)} className="w-full text-slate-500 font-bold uppercase text-xs">Cancelar</button>
+                            </form>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render((<App />));
+    </script>
+</body>
+</html>
